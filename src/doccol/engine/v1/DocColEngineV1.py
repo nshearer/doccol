@@ -1,5 +1,6 @@
 import os
 import glob
+import shutil
 from string import ascii_letters, digits
 from bunch import Bunch
 
@@ -12,10 +13,12 @@ from ..utils.Cache import Cache
 
 from ..exceptions import PropertyValueDecodeError
 
-from PythonDataV1 import PythonDataV1
+from ModelDataTypeV1 import safe_del_prop_value
 from ListDataV1 import ListDataV1
-from EmbeddedModelV1 import EmbeddedModelV1
+from DictDataV1 import DictDataV1
 from FileAttachmentV1 import FileAttachmentV1
+
+from prop_pickle import encode_prop_value_for_disk, decode_prop_value_from_disk
 
 SANITIZE_FOLD_SAFE_CHARS=set(ascii_letters + digits + '_')
 
@@ -90,14 +93,14 @@ class DocColEngineV1(DocColEngine):
 
     DATA_TYPES = {
         'list':         ListDataV1,
-        'embedded':     EmbeddedModelV1,
+        'dict':         DictDataV1,
         'attachment':   FileAttachmentV1,
     }
 
 
     # -- Domains -------------------------------------------------------------
 
-    def _get_domain_properties(self, domain_path):
+    def _get_domain_properties_file(self, domain_path):
         '''
         Read properties file from a domain
 
@@ -110,7 +113,7 @@ class DocColEngineV1(DocColEngine):
         return props
 
 
-    def _get_domain_path(self, domain, must_exist=False):
+    def _get_domain_dir_path(self, domain, must_exist=False):
         '''
         Determine which directory to save documents in for a domain name (create if needed)
 
@@ -123,7 +126,7 @@ class DocColEngineV1(DocColEngine):
         # See if folder already exists
         for path in glob.glob(os.path.join(self.documents_path, base_fold_name) + '*'):
             try:
-                path_domain_props = self._get_domain_properties(path)
+                path_domain_props = self._get_domain_properties_file(path)
             except Exception, e:
                 print "WARNING: For %s: %s" % (path, str(e))
                 continue
@@ -145,7 +148,7 @@ class DocColEngineV1(DocColEngine):
             os.mkdir(path)
 
             # Create properties file
-            props = self._get_domain_properties(path)
+            props = self._get_domain_properties_file(path)
             props['name'] = domain
 
             return path
@@ -159,6 +162,10 @@ class DocColEngineV1(DocColEngine):
         return os.path.join(self.__path, 'documents')
 
 
+    def _calc_doc_prop_file_path(self, doc_fold_path):
+        return os.path.join(doc_fold_path, 'doc.properties')
+
+
     def _get_doc_prop_file(self, doc_fold_path, must_exist=False):
         '''
         Read properties file from a domain
@@ -170,7 +177,7 @@ class DocColEngineV1(DocColEngine):
         :param doc_fold_path: Path the the folder for this document
         :return: PropertyFile
         '''
-        path = os.path.join(doc_fold_path, 'doc.properties')
+        path = self._calc_doc_prop_file_path(doc_fold_path)
 
         # Use cache to avoid re-opening if possible
         if self.__prop_file_cache.has(path):
@@ -202,7 +209,7 @@ class DocColEngineV1(DocColEngine):
         :param name: Unique ID of document in the domain
         :return: Internal Document ID
         '''
-        domain_path = self._get_domain_path(domain)
+        domain_path = self._get_domain_dir_path(domain)
         base_doc_name = sanitize_folder_name(name)
 
         # See if folder already exists
@@ -251,7 +258,7 @@ class DocColEngineV1(DocColEngine):
         :return: Generator listing domain names
         '''
         for fold_name in os.listdir(self.documents_path):
-            domain_props = self._get_domain_properties(os.path.join(
+            domain_props = self._get_domain_properties_file(os.path.join(
                 self.documents_path, fold_name))
             yield domain_props['name']
 
@@ -269,7 +276,7 @@ class DocColEngineV1(DocColEngine):
                     yield doc
 
         else:
-            domain_fold_path = self._get_domain_path(domain, must_exist=True)
+            domain_fold_path = self._get_domain_dir_path(domain, must_exist=True)
             if domain_fold_path is None:
                 return
             for doc_fold_name in os.listdir(domain_fold_path):
@@ -294,7 +301,7 @@ class DocColEngineV1(DocColEngine):
         :param name: Unique ID of document in the domain
         :return: Internal Document ID
         '''
-        domain_path = self._get_domain_path(domain, must_exist=True)
+        domain_path = self._get_domain_dir_path(domain, must_exist=True)
         if domain_path is None:
             return None
 
@@ -318,70 +325,6 @@ class DocColEngineV1(DocColEngine):
     def _calc_prop_file_prefix(self, prop_name):
         return sanitize_folder_name(prop_name) + '-' + str(abs(hash(prop_name)))
 
-    def _prep_properties_for_store(self, prop_value, doc_dir, prop_name):
-        '''
-        Helper method to convert assigned document property to save
-
-        :param prop_value: Value that was assigned to property
-        :param doc_dir: Path to directory for document
-        :param prop_name: Name of property
-        :return:
-        '''
-        prefix = self._calc_prop_file_prefix(prop_name)
-
-        if hasattr(prop_value, 'type_code') and hasattr(prop_value, 'prep_for_store'):
-            value_type = prop_value.type_code
-            store_value = prop_value.prep_for_store(doc_dir, prefix)
-        else:
-            prop_value = PythonDataV1(prop_value)
-            value_type = prop_value.type_code
-            store_value = prop_value.prep_for_store(doc_dir, prefix)
-
-        return {
-            'value_type': value_type,
-            'value': store_value,
-        }
-
-
-    def _decode_stored_value(self, stored_value, doc_dir, prop_name):
-        '''
-        Reverse _prep_properties_for_store()
-
-        :param stored_value: Value that was stored to file (returned from _prep_properties_for_store())
-        :param doc_dir: Path to directory for document
-        :param prop_name: Name of property
-        :return:
-        '''
-        prefix = self._calc_prop_file_prefix(prop_name)
-
-        # Get the property type class to decode the stored value
-        prop_value_type = None
-        prop_value_type_code = stored_value['value_type']
-        if self.DATA_TYPES.has_key(prop_value_type_code):
-            prop_value_type = self.DATA_TYPES[prop_value_type_code]()
-
-        if prop_value_type is None:
-            if stored_value['value_type'] == PythonDataV1().type_code:
-                prop_value_type = PythonDataV1()
-
-        if prop_value_type is None:
-            for possible_prop_class in self.DATA_TYPES.values():
-                possible_prop_class = possible_prop_class()
-                if possible_prop_class.handles_type_code(prop_value_type_code):
-                    prop_value_type = possible_prop_class
-
-        if prop_value_type is None:
-            raise PropertyValueDecodeError(
-                "Unknown value type '%s' for property '%s' on %s" % (
-                    prop_value_type_code, prop_name, str(doc_dir)))
-
-        # Decode value
-        return prop_value_type.decode_retrieved_value(
-            value = stored_value['value'],
-            store_path = doc_dir,
-            store_prefix = prefix)
-
-
 
     def get_document_properties(self, doc_id):
         '''
@@ -403,7 +346,16 @@ class DocColEngineV1(DocColEngine):
         # Decode according to property value type
         prop_values = dict()
         for prop_name, prop_value in stored_prop_values.items():
-            prop_values[prop_name] = self._decode_stored_value(prop_value, doc_fold_path, prop_name)
+            try:
+                prop_values[prop_name] = decode_prop_value_from_disk(
+                    stored_value = prop_value,
+                    store_path = doc_fold_path,
+                    store_prefix = self._calc_prop_file_prefix(prop_name),
+                    col_data_types = self.DATA_TYPES)
+            except PropertyValueDecodeError, e:
+                raise PropertyValueDecodeError(
+                    "Unable to decode property '%s' for document %s: %s" % (
+                        prop_name, str(doc_id), str(e)))
 
         return prop_values
 
@@ -419,13 +371,50 @@ class DocColEngineV1(DocColEngine):
         doc_dir = os.path.join(self.documents_path, doc_id.domain_folder, doc_id.doc_folder)
         doc_props = self._get_doc_prop_file(doc_dir)
 
+        existing_properties = self.get_document_properties(doc_id)
+        props_to_delete = list()
+
         # Convert property values for storage
         saved_props = doc_props['properties'].copy()
         for prop_name, prop_value in properties.items():
-            saved_props[prop_name] = self._prep_properties_for_store(prop_value, doc_dir, prop_name)
+
+            try:
+                props_to_delete.append(existing_properties[prop_name])
+            except KeyError:
+                pass
+
+            # None means delete property value
+            if prop_value is None:
+                try:
+                    del saved_props[prop_name]
+                except KeyError:
+                    pass
+
+            # Else, encoed eit
+            else:
+                saved_props[prop_name] = encode_prop_value_for_disk(
+                    prop_value = prop_value,
+                    store_path = doc_dir,
+                    store_prefix = self._calc_prop_file_prefix(prop_name))
 
         # Save properties
         doc_props['properties'] = saved_props
+
+        # Delete old values
+        for value in props_to_delete:
+            safe_del_prop_value(value)
+
+
+    def del_property(self, doc_id, name):
+        '''
+        Replace all properties in document with these ones
+
+        :param doc_id: Internal Document ID
+        :param name: Name of property to delete
+        '''
+        values = dict()
+        values[name] = None
+        self.update_properties(doc_id, values)
 
 
     def replace_properties(self, doc_id, properties):
@@ -444,7 +433,14 @@ class DocColEngineV1(DocColEngine):
 
         :param doc_id: Internal Document ID
         '''
-        raise NotImplementedError()
+        path = os.path.join(self.documents_path, doc_id.domain_folder, doc_id.doc_folder)
+        prop_file_path = self._calc_doc_prop_file_path(path)
+        if os.path.exists(path):
+            shutil.rmtree(path)
+
+        # Clean cache
+        self.__doc_path_cache.remove(prop_file_path)
+        self.__doc_path_cache.remove((doc_id.domain, doc_id.doc_name))
 
 
 

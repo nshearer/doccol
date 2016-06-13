@@ -2,63 +2,65 @@ from .ModelDataTypeV1 import ModelDataTypeV1, safe_del_prop_value
 
 from prop_pickle import encode_prop_value_for_disk, decode_prop_value_from_disk
 
-class ListDataV1(ModelDataTypeV1):
-    '''A property within a document that is a list of which can be a collection types'''
+class DictDataV1(ModelDataTypeV1):
+    '''
+    A property within a document that is a dictionary of which can be a collection types
+    '''
 
     def __init__(self, value=None):
 
-        self.__values = list()
+        self.__values = dict()
 
         if value is not None:
-            self.extend(value)
+            self.update(value)
 
 
     @property
     def type_code(self):
         '''The key to put in the value when saved to file'''
-        return 'list'
+        return 'dict'
 
 
     # -- Standard list access ----------------------------------------------------------
 
-    def append(self, item):
-        self.__values.append(item)
+    def __setitem__(self, key, value):
+        # Make sure previous value at key is cleaned up
+        try:
+            del self[key]
+        except KeyError:
+            pass
 
-    def extend(self, seq):
-        self.__values.extend(seq)
-
-
-    def __contains__(self, item):
-        for col_item in self.__values:
-            if col_item == item:
-                return True
-        return False
-
-    def remove(self, item):
-        for i, col_item in enumerate(self.__values):
-            if col_item == item:
-                del self[i]
-                return
+        # Set new value
+        self.__values[key] = value
 
 
-    def __getitem__(self, i):
-        return self.__values[i]
+    def __delitem__(self, key):
+        safe_del_prop_value(self.__values[key])
+        del self.__values[key]
 
 
-    def __setitem__(self, i, value):
-        del self[i]
-        self.__values[i] = value
+    def __getitem__(self, key):
+        return self.__values[key]
 
 
-    def __delitem__(self, i):
-        safe_del_prop_value(self.__values[i])
-        del self.__values[i]
+    def keys(self):
+        return self.__values.keys()
 
 
-    def pop(self, i=None):
-        if i is None:
-            return self.__values.pop()
-        return self.__values.pop(i)
+    def values(self):
+        return self.__values.values()
+
+
+    def items(self):
+        return self.__values.items()
+
+
+    def has_key(self, key):
+        return self.__values.has_key(key)
+
+
+    def __contains__(self, key):
+        return key in self.__values
 
 
     # -- Storing ----------------------------------------------------------------------
@@ -71,14 +73,14 @@ class ListDataV1(ModelDataTypeV1):
         :param store_prefix: Prefix to apply to any file names
         :return: value ready to be encoded into the file storing the document properties
         '''
-        store_values = list()
+        store_values = dict()
 
         # Recurse store logic
-        for value in self.__values:
-            store_values.append(encode_prop_value_for_disk(
+        for name, value in self.__values.items():
+            store_values[name] = encode_prop_value_for_disk(
                 prop_value = value,
                 store_path = store_path,
-                store_prefix = store_prefix))
+                store_prefix = store_prefix)
 
         return store_values
 
@@ -93,17 +95,17 @@ class ListDataV1(ModelDataTypeV1):
         :param col_data_types: Dictionary of property data type handlers in collection
         :return: anything
         '''
-        decoded_values = list()
+        decoded_values = dict()
 
         # Recurse decode logic
-        for item in value:
-            decoded_values.append(decode_prop_value_from_disk(
+        for name, item in value.items():
+            decoded_values[name] = decode_prop_value_from_disk(
                 stored_value = item,
                 store_path=store_path,
                 store_prefix=store_prefix,
-                col_data_types=col_data_types))
+                col_data_types=col_data_types)
 
-        return ListDataV1(decoded_values)
+        return DictDataV1(decoded_values)
 
 
     def delete_value(self):
@@ -112,6 +114,6 @@ class ListDataV1(ModelDataTypeV1):
 
         (sorry, you'll have to figure out the prefix and storage dir elsewise)
         '''
-        for value in self.__values():
+        for value in self.__values.values():
             safe_del_prop_value(value)
 

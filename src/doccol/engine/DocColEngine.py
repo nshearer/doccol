@@ -86,6 +86,16 @@ class DocColEngine(object):
 
 
     @abstractmethod
+    def del_property(self, doc_id, nmae):
+        '''
+        Replace all properties in document with these ones
+
+        :param doc_id: Internal Document ID
+        :param name: Name of property to delete
+        '''
+
+
+    @abstractmethod
     def del_document(self, doc_id):
         '''
         Delete a document from the collection

@@ -22,6 +22,12 @@ class DocumentProperties(object):
         self.__engine.update_properties(self.__doc_id, kwargs)
 
 
+    def del_prop(self, name):
+        '''Delete the property with the given name'''
+        self.__engine.del_property(self.__doc_id, name)
+
+
+
     def __getattr__(self, key):
         if not key.startswith('_'):
             return self.get(key)
@@ -34,5 +40,7 @@ class DocumentProperties(object):
             self.set({key: value})
         else:
             super(DocumentProperties, self).__setattr__(key, value)
+
+
 
 

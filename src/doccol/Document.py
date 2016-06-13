@@ -26,4 +26,9 @@ class Document(object):
         return self.properties
 
     def __str__(self):
-        return "%s :: %s" % (self.__doc_id.domain, self.__doc_id.name)
+        return "%s :: %s" % (self.__doc_id.domain, self.__doc_id.doc_name)
+
+
+    def delete(self):
+        '''Delete this document out of the collection'''
+        self.__engine.del_document(self.__doc_id)

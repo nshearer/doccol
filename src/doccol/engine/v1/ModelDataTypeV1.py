@@ -22,14 +22,24 @@ class ModelDataTypeV1(object):
 
 
     @abstractmethod
-    def decode_retrieved_value(self, value, store_path, store_prefix):
+    def decode_retrieved_value(self, value, store_path, store_prefix, col_data_types):
         '''
         Decode value prepared by prep_for_store() back to working value
 
         :param value: value from file (simple structure)
         :param store_path: Path to directory where additional files can be written
         :param store_prefix: Prefix to apply to any file names
+        :param col_data_types: Dictionary of property data type handlers in collection
         :return: anything
+        '''
+
+
+    @abstractmethod
+    def delete_value(self):
+        '''
+        Called when a value is deleted or replaced
+
+        (sorry, you'll have to figure out the prefix and storage dir elsewise)
         '''
 
 
@@ -77,3 +87,19 @@ class ModelDataTypeV1(object):
         '''
         for path in glob.glob(os.path.join(store_path, store_prefix) + '*'):
             yield path
+
+
+
+def safe_del_prop_value(value):
+    '''
+    Call delete_value() on value to make sure it gets cleaned up
+
+    :param value: May be a ModelDataTypeV1, or may be anything else
+    '''
+    try:
+        del_call = value.delete_value
+    except AttributeError:
+        del_call = None
+
+    if del_call is not None:
+        del_call()

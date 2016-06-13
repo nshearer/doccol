@@ -63,3 +63,17 @@ class DocumentCollection(object):
         return Document(self.__engine, doc_id)
 
 
+    def del_doc(self, domain, name):
+        '''
+        Delete a document out of the collection
+
+        :param domain: Name of the domain to get document from
+        :param name: Name of the document to retrieve (within domain)
+        '''
+        doc_id = self.__engine.get_document_id(domain, name)
+        if doc_id is None:
+            raise KeyError("Document doesn't exist: %s \ %s" % (
+                domain, name))
+        self.__engine.del_document(doc_id)
+
+
